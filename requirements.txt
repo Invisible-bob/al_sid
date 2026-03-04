@@ -16,11 +16,11 @@ trl==0.9.6
 
 # 高性能计算与加速
 deepspeed==0.14.5
-flash_attn==2.5.6
+# flash_attn==2.5.6
 tensordict==0.8.2
 
 # 数据处理与基础库
-numpy==1.24.4
+numpy==1.26.4
 pyarrow==20.0.0
 fsspec==2024.6.1
 tqdm==4.67.1
