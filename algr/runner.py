@@ -93,6 +93,8 @@ class Runner:
             from models.qwen2_5.data import QwenDataProcess as DataProcess
         elif self.config.model_type == 't5':
             from models.t5.data import T5DataProcess as DataProcess
+        elif self.config.model_type == 'qwen3':
+            from models.qwen3.data import QwenDataProcess as DataProcess
         preprocess_function = DataProcess(self.custom_args, self.tokenizer, self.is_train)
         return preprocess_function
         
@@ -110,6 +112,9 @@ class Runner:
         elif self.config.model_type == 't5':
             from models.t5.modeling_t5 import T5ForConditionalGeneration
             model_cls = T5ForConditionalGeneration
+        elif self.config.model_type == 'qwen3':
+            from models.qwen3.modeling_qwen3 import Qwen3ForCausalLM
+            model_cls = Qwen3ForCausalLM
         else:
             raise ValueError(f"model_type:{self.config.model_type} is not defined yet.")
 
@@ -141,26 +146,28 @@ class Runner:
         dataset_name = self.config.dataset_name
         data_file = self.config.data_file
         if self.is_train:
-            print(f"📊 loading dataset...")
+            print(f"📊 loading train dataset...")
             if os.path.isfile(data_file):
                 dataset = load_dataset("csv", data_files=data_file, split="train", streaming=self.config.streaming)
             else:
                 dataset = load_dataset(dataset_name, data_files=data_file, split="train", streaming=self.config.streaming)
-            print("🔄 processing dataset...")
+            print("🔄 processing train dataset...")
             dataset = dataset.filter(self.preprocess_function.filter_fn)
             tokenized_train = dataset.map(self.preprocess_function, batched=False, remove_columns=["system", "user", "answer"])
             return tokenized_train, None
         else:
-            print(f"📊 loading dataset...")
+            print(f"📊 loading test dataset...")
             if os.path.isfile(data_file):
+                print(f"📊 loading dataset from {data_file}")
                 dataset = load_dataset("csv", data_files=data_file, split="all")
             else:
                 ## To read different files according to different stages
                 dataset = load_dataset(dataset_name, data_files=data_file, split="all")
-            print("🔄 processing dataset...")
+            print("🔄 processing test dataset...")
             #tokenized_test = dataset["test"].map(self.preprocess_function, batched=False, remove_columns=["instruction", "input", "output"])
             dataset = dataset.filter(self.preprocess_function.filter_fn)
             tokenized_test = dataset.map(self.preprocess_function, batched=False)
+            print(f"📊 test dataset size: {len(tokenized_test)}")
             return None, tokenized_test
 
     def create_data_collator(self):
