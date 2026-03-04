@@ -52,33 +52,6 @@
 
 
 
-<!-- TABLE OF CONTENTS
-<details>
-  <summary>Table of Contents</summary>
-  <ol>
-    <li>
-      <a href="#about-the-project">About The Project</a>
-      <ul>
-        <li><a href="#built-with">Built With</a></li>
-      </ul>
-    </li>
-    <li>
-      <a href="#getting-started">Getting Started</a>
-      <ul>
-        <li><a href="#prerequisites">Prerequisites</a></li>
-        <li><a href="#installation">Installation</a></li>
-      </ul>
-    </li>
-    <li><a href="#usage">Usage</a></li>
-    <li><a href="#roadmap">Roadmap</a></li>
-    <li><a href="#contributing">Contributing</a></li>
-    <li><a href="#license">License</a></li>
-    <li><a href="#contact">Contact</a></li>
-    <li><a href="#acknowledgments">Acknowledgments</a></li>
-  </ol>
-</details> -->
-
-
 
 <!-- ABOUT THE PROJECT -->
 ## About The Project
@@ -89,25 +62,6 @@ Semantic identifiers (SIDs) have gained increasing interest in generative retrie
 Leveraging this dataset, we systematically explore various strategies for SID generation and validate their effectiveness across different settings and tasks. Extensive online experiments show **8.93\%** and **0.35\%** improvements in PVR and transaction count, highlighting the practical value of our approach. 
 Notably, we propose two novel metrics of SID that correlate well with GR performance, providing insights into a convenient measurement of SID quality without training GR. Subsequent offline pretraining also offers support for online convergence in industrial applications. 
 The code and data are available at [code repo](https://github.com/selous123/al_sid).
-
-<!-- <p align="right">(<a href="#readme-top">back to top</a>)</p> -->
-
-
-
-<!-- ### Built With
-
-* [![Next][Next.js]][Next-url]
-* [![React][React.js]][React-url]
-* [![Vue][Vue.js]][Vue-url]
-* [![Angular][Angular.io]][Angular-url]
-* [![Svelte][Svelte.dev]][Svelte-url]
-* [![Laravel][Laravel.com]][Laravel-url]
-* [![Bootstrap][Bootstrap.com]][Bootstrap-url]
-* [![JQuery][JQuery.com]][JQuery-url]
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
- -->
-
 
 
 <!-- GETTING STARTED -->
@@ -141,7 +95,7 @@ wget -P datas/ https://mvap-public-data.oss-cn-zhangjiakou.aliyuncs.com/ICLR_202
 ```
 
 Dataset Preview:
-* 10m_80msideinfo_feat.npz for contrastive task in Eq.2
+* contrastive_data_mask.npz for contrastive task in Eq.2
 
 The file contains three components: 
 
@@ -167,13 +121,13 @@ print("embeds:", embeds.shape, embeds[:1]) #(6844930, 512) [[xx,xx,...,xx]]
 ```
 
 
-* 5mold_80msideinfo_feat.npz for reconstruction task in Eq.3
+* reconstruct_data_mask.npz for reconstruction task in Eq.3
 ``` python
 import numpy as np
 import os
 # 1. load .npz file
 dirpath = '~/git/al_sid/SID_generation/datas'
-filename1 = '5mold_80msideinfo_feat.npz'
+filename1 = 'reconstruct_data_mask.npz'
 file_path = os.path.join(dirpath, filename1)  # replace your filename1
 data = np.load(file_path)
 print("Available arrays:", data.files) ##Available arrays: ['ids', 'embeds']
@@ -193,7 +147,59 @@ from datasets import load_dataset
 dataset = load_dataset("AL-GR/AL-GR-Tiny", data_files="train_data/s1_tiny.csv", split="train")
 ```
 
-Data Preview: https://huggingface.co/datasets/AL-GR/AL-GR-Tiny
+Data Availability: All training datasets have been released on Hugging Face.
+
+---
+| **Codebook** | **final (Ours)** | **base (Base)** |
+| :--- | :--- | :--- |
+| **Training/Test Dataset** | [AL-GR / AL-GR-v1](https://huggingface.co/datasets/AL-GR/AL-GR-v1/) | [AL-GR / AL-GR](https://huggingface.co/datasets/AL-GR/AL-GR/) |
+| **Item-SID Mapping** | [AL-GR/Item-SID/sid_final.csv](https://huggingface.co/datasets/AL-GR/Item-SID/blob/main/sid_final.csv) | [AL-GR/Item-SID/sid_base.csv](https://huggingface.co/datasets/AL-GR/Item-SID/blob/main/sid_base.csv) |
+| **Tiny Dataset** | Both training and testing use the final version: [AL-GR / AL-GR-Tiny](https://huggingface.co/datasets/AL-GR/AL-GR-Tiny) | Base version without preprocessing; if needed, can be obtained by joining [AL-GR/AL-GR-Tiny/origin_behavior](https://huggingface.co/datasets/AL-GR/AL-GR-Tiny/tree/main/origin_behavior) from the Tiny data with [the base version Item-SID](https://huggingface.co/datasets/AL-GR/AL-GR-Tiny/blob/main/item_info/tiny_item_sid_base.csv) mapping. |
+| **ITEM-EMB Multimodal Data** | final version: [AL-GR / Item-EMB / final_feature](https://huggingface.co/datasets/AL-GR/Item-EMB/tree/main/final_feature) | base version: [AL-GR / Item-EMB / base_feature](https://huggingface.co/datasets/AL-GR/Item-EMB/tree/main/base_feature) |
+---
+
+Use this code for preview the ITEM-EMB Multimodal Data:
+```python
+import base64
+import numpy as np
+from datasets import load_dataset
+import pandas as pd
+import logging
+
+data_file = "./data/part_0.csv"
+chunk_size = 50  #
+INPUT_EMBEDDING_COL = 'feature'  # the name of embedding col: "feature"
+INPUT_ID_COL = 'base62_string'  # the name of item_id after hash: "base62_string"
+item_ids_buffer = []
+embeddings_buffer = []
+EXPECTED_EMBEDDING_DIM = 512
+for chunk in pd.read_csv(data_file, chunksize=chunk_size, encoding='utf-8'):
+    chunk = chunk[chunk[INPUT_EMBEDDING_COL] != INPUT_EMBEDDING_COL]
+    if chunk.empty:
+        continue
+    item_ids_buffer.extend(chunk[INPUT_ID_COL].tolist())
+    embeddings_buffer.extend(chunk[INPUT_EMBEDDING_COL].tolist())
+    break
+
+# print(item_ids_buffer, embeddings_buffer[:5])
+embedding_list = []
+valid_item_ids = []
+for idx, (item_id, embedding_str) in enumerate(zip(item_ids_buffer, embeddings_buffer)):
+    try:
+        embedding_np = np.frombuffer(base64.b64decode(embedding_str), dtype=np.float32)
+        if embedding_np.shape[0] != EXPECTED_EMBEDDING_DIM:
+            logging.warning(
+                f"The dim of item ID '{item_id}' is not correct"
+                f"Expected dim: {EXPECTED_EMBEDDING_DIM}, Actual dim: {embedding_np.shape[0]}。"
+            )
+            continue
+        embedding_list.append(embedding_np)
+        valid_item_ids.append(item_id)
+        print(f"idx:{idx}, item_id:{item_id}, embedding:{embedding_np[:5]}")
+    except Exception as e:
+        logging.warning(f"Error occurs when decoding item id '{item_id}'")
+        continue
+```
 
 ### SID Generation
 1. Training the Model
@@ -244,12 +250,6 @@ python infer_SID.py
     ```
 
 
-<!-- USAGE EXAMPLES -->
-<!-- ## Usage
-Use this space to show useful examples of how a project can be used. Additional screenshots, code examples and demos work well in this space. You may also link to more resources. -->
-<!-- _For more examples, please refer to the [Documentation]()_ -->
-<!-- <p align="right">(<a href="#readme-top">back to top</a>)</p> -->
-
 
 <!-- ROADMAP -->
 ## Roadmap
@@ -259,10 +259,6 @@ Use this space to show useful examples of how a project can be used. Additional 
 - [x] Data Processing
 
 See the [open issues](https://github.com/selous123/al_sid/issues) for a full list of proposed features (and known issues).
-
-<!-- <p align="right">(<a href="#readme-top">back to top</a>)</p> -->
-
-
 
 <!-- CONTRIBUTING -->
 ## Contributing
@@ -278,8 +274,6 @@ Don't forget to give the project a star! Thanks again!
 4. Push to the Branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
 
-<!-- <p align="right">(<a href="#readme-top">back to top</a>)</p> -->
-
 ### Top contributors:
 
 <a href="https://github.com/selous123/al_sid/graphs/contributors">
@@ -293,42 +287,23 @@ Don't forget to give the project a star! Thanks again!
 
 Distributed under the project_license. See `LICENSE.txt` for more information.
 
-<!-- <p align="right">(<a href="#readme-top">back to top</a>)</p> -->
-
 
 
 <!-- CONTACT -->
 ## Contact
-If you have any questions or encounter difficulties, we welcome you to contact ours via [GitHub Issues](https://github.com/selous123/al_sid/issues). We aim to respond promptly and support you in quickly getting up and running with generative recommendation.
-<!-- Your Name - [@twitter_handle](https://twitter.com/twitter_handle) - email@email_client.com -->
-<!-- Project Link: [https://github.com/selous123/al_sid](https://github.com/selous123/al_sid) -->
-<!-- <p align="right">(<a href="#readme-top">back to top</a>)</p> -->
-
+If you have any questions or encounter difficulties, we welcome you to contact us via [GitHub Issues](https://github.com/selous123/al_sid/issues). We aim to respond promptly and support you in quickly getting up and running with generative recommendation.
 
 ## Citing this work
 Please cite the following paper if you find our code helpful.
 
 ```
-@misc{fu2025forge,
-      title={FORGE: Forming Semantic Identifiers for Generative Retrieval in Industrial Datasets}, 
-      author={Kairui Fu and Tao Zhang and Shuwen Xiao and Ziyang Wang and Xinming Zhang and Chenchi Zhang and Yuliang Yan and Junjun Zheng and Yu Li and Zhihong Chen and Jian Wu and Xiangheng Kong and Shengyu Zhang and Kun Kuang and Yuning Jiang and Bo Zheng},
-      year={2025},
-      eprint={2509.20904},
-      archivePrefix={arXiv},
-      primaryClass={cs.IR},
-      url={https://arxiv.org/abs/2509.20904}, 
+@article{fu2025forge,
+  title={FORGE: Forming Semantic Identifiers for Generative Retrieval in Industrial Datasets},
+  author={Fu, Kairui and Zhang, Tao and Xiao, Shuwen and Wang, Ziyang and Zhang, Xinming and Zhang, Chenchi and Yan, Yuliang and Zheng, Junjun and others},
+  journal={arXiv preprint arXiv:2509.20904},
+  year={2025}
 }
 ```
-
-
-<!-- ACKNOWLEDGMENTS -->
-<!-- ## Acknowledgments
-
-* []()
-* []()
-* []() -->
-
-<!-- <p align="right">(<a href="#readme-top">back to top</a>)</p> -->
 
 
 
@@ -344,22 +319,4 @@ Please cite the following paper if you find our code helpful.
 [issues-url]: https://github.com/selous123/al_sid/issues
 [license-shield]: https://img.shields.io/github/license/selous123/al_sid.svg?style=for-the-badge
 [license-url]: https://github.com/selous123/al_sid/blob/main/LICENSE
-[linkedin-shield]: https://img.shields.io/badge/-LinkedIn-black.svg?style=for-the-badge&logo=linkedin&colorB=555
-[linkedin-url]: https://linkedin.com/in/linkedin_username
 [product-screenshot]: asset/FORGE.png
-[Next.js]: https://img.shields.io/badge/next.js-000000?style=for-the-badge&logo=nextdotjs&logoColor=white
-[Next-url]: https://nextjs.org/
-[React.js]: https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB
-[React-url]: https://reactjs.org/
-[Vue.js]: https://img.shields.io/badge/Vue.js-35495E?style=for-the-badge&logo=vuedotjs&logoColor=4FC08D
-[Vue-url]: https://vuejs.org/
-[Angular.io]: https://img.shields.io/badge/Angular-DD0031?style=for-the-badge&logo=angular&logoColor=white
-[Angular-url]: https://angular.io/
-[Svelte.dev]: https://img.shields.io/badge/Svelte-4A4A55?style=for-the-badge&logo=svelte&logoColor=FF3E00
-[Svelte-url]: https://svelte.dev/
-[Laravel.com]: https://img.shields.io/badge/Laravel-FF2D20?style=for-the-badge&logo=laravel&logoColor=white
-[Laravel-url]: https://laravel.com
-[Bootstrap.com]: https://img.shields.io/badge/Bootstrap-563D7C?style=for-the-badge&logo=bootstrap&logoColor=white
-[Bootstrap-url]: https://getbootstrap.com
-[JQuery.com]: https://img.shields.io/badge/jQuery-0769AD?style=for-the-badge&logo=jquery&logoColor=white
-[JQuery-url]: https://jquery.com 
