@@ -80,38 +80,44 @@ class RQVAE_EMBED(nn.Module):
         self.latent_loss_weight = latent_loss_weight
 
     def forward(self, xs, num_samples=0, detail=False, reference_code=None, **kwargs):
+        # 1. 编码输入特征 xs，得到潜在表示 z_e
         z_e = self.encode(xs)
 
-        # z_e = F.normalize(z_e, p=2, dim=-1)
-
-        # if self.do_bn:
-        #     z_e = self.bn(z_e)
+        # 2. 使用量化器对 z_e 进行残差量化
+        #    - z_q: 量化后的特征
+        #    - quant_loss: 量化损失（包含承诺损失等）
+        #    - code: 量化后的码本索引
+        #    - feature_norm: 输入特征的范数
+        #    - quant_norm: 量化特征的范数
+        #    - angle: 量化特征与残差的夹角
+        #    - angle_aggregated: 累计量化特征与原始特征的夹角
+        #    - z_q_neg: 负样本量化特征（如果 num_samples > 0）
+        #    - all_distances: 所有码本的距离
         z_q, quant_loss, code, feature_norm, quant_norm, angle, angle_aggregated, z_q_neg, all_distances = self.quantizer(
             z_e, num_samples=num_samples, reference_code=reference_code, **kwargs)
-        # z_e_norm = z_e.pow(2).sum(-1).pow(0.5).mean(-1).detach().cpu()
+        
+        # 3. 如果不需要详细损失信息，则只保留承诺损失
         if not detail:
             quant_loss = quant_loss['commitment_loss']
 
-        # out = self.decode(z_q)
-
-        # 解码第二层和第三层码本向量
+        # 4. 解码量化特征 z_q，得到重构特征 out
+        #    如果需要生成负样本（num_samples > 0），则同时解码正样本和负样本
         bs, level = xs.shape
         if num_samples > 0:
+            # 4a. 将正样本和负样本的量化特征拼接，一起解码
             z_combined = torch.cat((z_q, z_q_neg), dim=0)
             decoded = self.decode(z_combined)  # 解码
-            out = decoded[:bs]
-            out_neg = decoded[bs:]
-            out_neg = out_neg.reshape(bs, num_samples, -1)
-
-            # 测试无码本
-            # z_combined = torch.cat((z_e, z_e), dim=0)
-            # decoded = self.decode(z_combined)  # 解码
-            # bs =  xs.shape[0]
-            # out = decoded[:bs]
-            # out2 = decoded[bs:]
+            out = decoded[:bs]                 # 正样本重构特征
+            out_neg = decoded[bs:]             # 负样本重构特征
+            out_neg = out_neg.reshape(bs, num_samples, -1) # 调整负样本形状
+            
+            # 4b. 返回正样本重构特征、量化损失、码本索引等信息
             return out, quant_loss, code, feature_norm, quant_norm, z_q, out_neg
         else:
+            # 4c. 直接解码量化特征 z_q
             out = self.decode(z_q)  # 解码
+            
+            # 4d. 返回重构特征、量化损失、码本索引等信息
             return out, quant_loss, code, feature_norm, quant_norm, z_q, all_distances, z_e
 
     def encode(self, x):
@@ -163,21 +169,32 @@ class RQVAE_EMBED(nn.Module):
 
     def compute_loss(self, out, quant_loss, code, xs=None, valid=False, ):
 
+        # 根据配置的损失类型计算重构损失
+        # 支持三种损失类型：MSE、L1、余弦相似度
         if self.loss_type == 'mse':
+            # 均方误差损失: L_recon = E[(out - xs)^2]
             loss_recon = F.mse_loss(out, xs, reduction='mean')
         elif self.loss_type == 'l1':
+            # L1损失: L_recon = E[|out - xs|]
             loss_recon = F.l1_loss(out, xs, reduction='mean')
         elif self.loss_type == 'cosine':
+            # 余弦相似度损失: L_recon = 1 - cos(out, xs)
             loss_recon = self.cosine_loss(out, xs)
         else:
             raise ValueError('incompatible loss type')
 
+        # 潜在空间损失即为量化器返回的损失
+        # 对于RQ-VAE，这通常是承诺损失(commitment loss)
         loss_latent = quant_loss
 
+        # 在验证模式下，对损失进行缩放以正确计算批次平均值
         if valid:
             loss_recon = loss_recon * xs.shape[0]
             loss_latent = loss_latent * xs.shape[0]
 
+        # 总损失 = 重构损失 + 潜在空间损失
+        # L_total = L_recon + β * L_latent
+        # 其中β是潜在损失权重，默认为0.25
         loss_total = loss_recon + loss_latent
 
         return {

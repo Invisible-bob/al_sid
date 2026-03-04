@@ -1,0 +1,56 @@
+_base_: 'default.yml'
+
+data:
+  batch_size: 2048
+  valid_batch_size: 2048
+  FromOSS: True
+  train_root: 'datas/ae_coin_semantic_emb_256_all.npz'
+  val_root: ''
+  train_clip_i2i: [ ]
+  train_clip_i2v: [ ]
+  val_clip: ''
+  save_prefix: 'ae_coin_256_8192_d64_all'
+  max_neg_len: 11
+  cid_val_root: ''
+  gallery_root: ''
+
+model:
+  input_dim: 256
+  codebook_size: 8192
+  codebook_dim: 64
+  codebook_num: 3
+  kl_div_loss_weight: 0.0
+  latent_loss_weight: 0
+  latent_weight: '[0.5, 0.5]'
+  num_layers: 3
+  loss_type: 'mse'
+  shared_codebook: False
+  restart_unused_codes: True
+  VQ_ema: False
+  decay: 0.99
+  pretrained_codebook: ''
+  contrastive: ''
+  fuka: False
+  do_bn: False
+  freeze_lv1: False
+  freeze_lv2: False
+  batch_loss_weight: 0.75
+  neg_loss_weight: 0.25
+  rotation_trick: False
+
+train:
+  lr: 0.0002
+  finetune: ''
+  start_epoch: 0
+  epochs: 150
+  warmup_epochs: 40
+  min_lr: 1e-7
+  neg_num: 0
+  filter_lr: null
+  filter_lr_name: ''
+  weight_decay: 0.0001 # 0.1 0.0001
+
+tmp_path: 'ckpts/'
+resume: '' # 
+pretrain: ''
+log_step: 50

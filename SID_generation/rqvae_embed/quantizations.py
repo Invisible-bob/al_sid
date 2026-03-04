@@ -91,14 +91,21 @@ class VQEmbedding(nn.Embedding):
 
     @torch.no_grad()
     def compute_distances(self, inputs):
-        # l2 distance
+        # 1. 获取码本向量的转置，用于计算距离
+        #    - codebook_t: 码本向量的转置 [embed_dim, n_embed]
         codebook_t = self.weight[:-1, :].t()
 
         (embed_dim, _) = codebook_t.shape
         inputs_shape = inputs.shape
         assert inputs_shape[-1] == embed_dim
 
+        # 2. 根据配置的距离类型计算输入特征与码本向量的距离
         if self.distance_type == 'l2':
+            # 2a. 计算L2距离（欧几里得距离）
+            #     - inputs_flat: 输入特征展平为二维张量 [B*h*w, embed_dim]
+            #     - inputs_norm_sq: 输入特征的平方和 [B*h*w, 1]
+            #     - codebook_t_norm_sq: 码本向量的平方和 [1, n_embed]
+            #     - distances: 输入特征与码本向量的L2距离 [B, h, w, n_embed]
             inputs_flat = inputs.reshape(-1, embed_dim)
 
             inputs_norm_sq = inputs_flat.pow(2.).sum(dim=1, keepdim=True)
@@ -111,6 +118,11 @@ class VQEmbedding(nn.Embedding):
             )
             distances = distances.reshape(*inputs_shape[:-1], -1)  # [B, h, w, n_embed or n_embed+1]
         elif self.distance_type == 'cosine':
+            # 2b. 计算余弦距离
+            #     - codebook_vectors: 码本向量 [n_embed, embed_dim]
+            #     - codebook_vectors_norm: 归一化的码本向量 [n_embed, embed_dim]
+            #     - inputs_norm: 归一化的输入特征 [B, h, w, embed_dim]
+            #     - distances: 输入特征与码本向量的余弦距离 [B, h, w, n_embed]
             # cosine distance
             codebook_vectors = self.weight[:-1, :]
             codebook_vectors_norm = F.normalize(codebook_vectors, p=2, dim=1)
@@ -119,59 +131,30 @@ class VQEmbedding(nn.Embedding):
         else:
             raise ValueError(f"Unsupported distance type: {self.distance_type}")
 
+        # 3. 返回计算得到的距离
         return distances
-
-    # def compute_distances_gard(self, inputs):
-    #     # l2 distance
-    #     codebook_t = self.weight[:-1, :].t().detach()
-
-    #     (embed_dim, _) = codebook_t.shape
-    #     inputs_shape = inputs.shape
-    #     assert inputs_shape[-1] == embed_dim
-
-    #     inputs_flat = inputs.reshape(-1, embed_dim)
-
-    #     inputs_norm_sq = inputs_flat.pow(2.).sum(dim=1, keepdim=True)
-    #     codebook_t_norm_sq = codebook_t.pow(2.).sum(dim=0, keepdim=True)
-    #     distances = torch.addmm(
-    #         inputs_norm_sq + codebook_t_norm_sq,
-    #         inputs_flat,
-    #         codebook_t,
-    #         alpha=-2.0,
-    #     )
-    #     distances = distances.reshape(*inputs_shape[:-1], -1)  # [B, h, w, n_embed or n_embed+1]
-
-    #     return distances
 
     @torch.no_grad()
     def find_nearest_embedding(self, inputs, use_sinkhorn=True):
+        # 1. 计算输入特征与所有码本向量的距离
+        #    - distances: 输入特征与所有码本向量的距离 [B, h, w, n_embed]
         distances = self.compute_distances(inputs)  # [B, h, w, n_embed or n_embed+1]
 
-        # sinkhorn
+        # 2. 在训练模式下，如果启用Sinkhorn算法，则对距离进行归一化并应用Sinkhorn算法
+        #    Sinkhorn算法可以改善码本向量的分配，使其更加均匀
+        #    - distances: 归一化后的距离
+        #    - Q: Sinkhorn算法输出的分配矩阵
+        #    - embed_idxs: 根据分配矩阵得到的码本向量索引
         if self.training and use_sinkhorn:
             distances = (distances - distances.mean()) / (distances.std() + 1e-6)
             distances = distances - distances.min()
             Q = sinkhorn(distances)
             embed_idxs = Q.argmax(dim=-1)
         else:
+            # 3. 在推理模式下或未启用Sinkhorn算法时，直接选择距离最近的码本向量索引
             embed_idxs = distances.argmin(dim=-1)  # use padding index or not
 
-        # embed_idxs = distances.argmin(dim=-1)
-
-        # 依概率采样 + 退火算法
-        # if self.training:
-        #     # inverted_distances = 1.0 / (distances + 1e-8)
-        #     inverted_distances = -distances
-        #     # T = 0.1
-        #     probabilities = F.softmax(inverted_distances / self.temperature, dim=-1)
-        #     # probabilities = inverse_distances / inverse_distances.sum(dim=-1, keepdim=True)
-        #     # 创建一个包含 [B, h, w] 的形状，存储的每个位置对应的概率分布中每个类别的概率
-        #     embed_idxs = torch.multinomial(probabilities, num_samples=1).squeeze(-1)
-        #     # self.temperature = max(self.prob_decay * self.temperature, self.eps)
-        #     self.temperature = max(self.temperature - self.prob_decay, self.eps)
-        # else:
-        #     embed_idxs = distances.argmin(dim=-1)
-
+        # 4. 返回码本向量索引和距离
         return embed_idxs, distances
 
     @torch.no_grad()
@@ -185,40 +168,58 @@ class VQEmbedding(nn.Embedding):
 
     @torch.no_grad()
     def _update_buffers(self, vectors, idxs):
-
+        # 1. 获取码本向量的数量和维度
         n_embed, embed_dim = self.weight.shape[0] - 1, self.weight.shape[-1]
 
+        # 2. 重塑输入向量和索引，以便进行后续计算
+        #    - vectors: 输入向量 [N, embed_dim]
+        #    - idxs: 码本向量索引 [N]
         vectors = vectors.reshape(-1, embed_dim)
         idxs = idxs.reshape(-1)
 
         n_vectors = vectors.shape[0]
         n_total_embed = n_embed
 
+        # 3. 创建一个独热编码矩阵，用于统计每个码本向量被分配的输入向量数量
+        #    - one_hot_idxs: 独热编码矩阵 [n_embed, N]
         one_hot_idxs = vectors.new_zeros(n_total_embed, n_vectors)
         one_hot_idxs.scatter_(dim=0,
                               index=idxs.unsqueeze(0),
                               src=vectors.new_ones(1, n_vectors)
                               )
 
+        # 4. 计算每个码本向量被分配的输入向量数量和这些向量的总和
+        #    - cluster_size: 每个码本向量被分配的输入向量数量 [n_embed]
+        #    - vectors_sum_per_cluster: 每个码本向量被分配的输入向量总和 [n_embed, embed_dim]
         cluster_size = one_hot_idxs.sum(dim=1)
         vectors_sum_per_cluster = one_hot_idxs @ vectors
 
+        # 5. 如果在分布式训练环境中，则对计算结果进行全局归约
         if dist.is_initialized():
             dist.all_reduce(vectors_sum_per_cluster, op=dist.ReduceOp.SUM)
             dist.all_reduce(cluster_size, op=dist.ReduceOp.SUM)
 
+        # 6. 使用指数移动平均(EMA)更新码本向量的统计信息
+        #    - cluster_size_ema: 码本向量被分配的输入向量数量的EMA [n_embed]
+        #    - embed_ema: 码本向量被分配的输入向量总和的EMA [n_embed, embed_dim]
         self.cluster_size_ema.mul_(self.decay).add_(cluster_size, alpha=1 - self.decay)
         self.embed_ema.mul_(self.decay).add_(vectors_sum_per_cluster, alpha=1 - self.decay)
 
+        # 7. 如果启用了重启未使用码本向量的功能，则对未使用的码本向量进行重启
         if self.restart_unused_codes:
+            # 7a. 如果输入向量数量少于码本向量数量，则通过添加噪声来扩展输入向量
             if n_vectors < n_embed:
                 vectors = self._tile_with_noise(vectors, n_embed)
             n_vectors = vectors.shape[0]
+            # 7b. 随机选择输入向量作为新的码本向量
             _vectors_random = vectors[torch.randperm(n_vectors, device=vectors.device)][:n_embed]
 
+            # 7c. 如果在分布式训练环境中，则对随机选择的向量进行广播
             if dist.is_initialized():
                 dist.broadcast(_vectors_random, 0)
 
+            # 7d. 计算码本向量的使用情况，并更新未使用的码本向量
+            #     - usage: 码本向量的使用情况 [n_embed, 1]
             usage = (self.cluster_size_ema.view(-1, 1) >= 1).float()
             self.embed_ema.mul_(usage).add_(_vectors_random * (1 - usage))
             self.cluster_size_ema.mul_(usage.view(-1))
@@ -226,17 +227,33 @@ class VQEmbedding(nn.Embedding):
 
     @torch.no_grad()
     def _update_embedding(self):
-
+        # 1. 获取码本向量的数量
         n_embed = self.weight.shape[0] - 1
+        
+        # 2. 计算所有码本向量被分配的输入向量总数量
         n = self.cluster_size_ema.sum()
+        
+        # 3. 使用EMA统计信息更新码本向量
+        #    - normalized_cluster_size: 归一化的簇大小，用于防止除零错误
+        #      公式: (n * (cluster_size_ema + eps)) / (n + n_embed * eps)
         normalized_cluster_size = (
                 n * (self.cluster_size_ema + self.eps) / (n + n_embed * self.eps)
         )
+        
+        # 4. 更新码本向量权重
+        #    - self.embed_ema: 码本向量被分配的输入向量总和的EMA
+        #    - normalized_cluster_size: 归一化的簇大小
+        #    - self.weight[:-1, :]: 更新除填充索引外的所有码本向量
         self.weight[:-1, :] = self.embed_ema / normalized_cluster_size.reshape(-1, 1)
 
     def forward(self, inputs, reference_code=None, **kwargs):
+        # 1. 查找最接近的码本向量索引和距离
+        #    - embed_idxs: 最接近的码本向量索引 [B, h, w]
+        #    - distances: 输入特征与所有码本向量的距离 [B, h, w, n_embed]
         embed_idxs, distances = self.find_nearest_embedding(inputs, use_sinkhorn=kwargs.get('use_sinkhorn', True))
 
+        # 2. 如果提供了参考码本索引，则以一定概率替换查找结果
+        #    这可以用于某些特定的训练策略
         if reference_code is not None:
             # 以一定概率选择参考code的index
             bs = embed_idxs.size(0)
@@ -245,15 +262,20 @@ class VQEmbedding(nn.Embedding):
             random_probs = torch.rand(bs).to(inputs.device)
             embed_idxs = torch.where(random_probs < p, reference_code, embed_idxs)
 
+        # 3. 在训练模式下，如果启用了EMA，则更新码本缓冲区
+        #    EMA（指数移动平均）用于更新码本向量，使其更接近实际使用的特征
         if self.training:
             if self.ema:
                 self._update_buffers(inputs, embed_idxs)
 
+        # 4. 根据索引获取对应的码本向量
         embeds = self.embed(embed_idxs)
 
+        # 5. 在训练模式下，如果启用了EMA，则更新码本向量
         if self.ema and self.training:
             self._update_embedding()
 
+        # 6. 返回量化后的特征、索引和距离
         return embeds, embed_idxs, distances
 
     def embed(self, idxs):
@@ -410,82 +432,109 @@ class RQBottleneck(nn.Module):
         """
         B, embed_dim = x.shape
 
+        # 初始化残差特征为输入特征 x 的副本
         residual_feature = x.detach().clone()  # 会自减，所以要clone
-        # x_ = x.clone()
+        # 记录输入特征的范数
         feature_norm = [x.pow(2).sum(-1).pow(0.5).mean(-1).detach().cpu()]
 
+        # 存储每层量化后的特征和码本索引
         quant_list = []
         code_list = []
+        # 初始化累计量化特征为零张量
         aggregated_quants = torch.zeros_like(x)
 
-        # log
-        quant_norm = []
-        angle = []
-        angle_aggregated = []
-        all_distances = []
+        # 用于记录日志信息的列表
+        quant_norm = []        # 每层量化特征的范数
+        angle = []             # 每层残差特征与量化特征的夹角
+        angle_aggregated = []  # 累计量化特征与原始特征的夹角
+        all_distances = []     # 每层所有码本的距离
 
+        # 逐层进行残差量化
         for i in range(self.code_shape[-1]):
+            # 使用第 i 个码本对当前残差特征进行量化
             if reference_code is not None:
                 quant, code, distances = self.codebooks[i](residual_feature, reference_code=reference_code[:, i],
                                                            **kwargs)
             else:
                 quant, code, distances = self.codebooks[i](residual_feature, **kwargs)
 
-            # distances = self.codebooks[i].compute_distances_gard(x_)
-            # x_ = x_ - quant
-            # all_distances.append(distances.unsqueeze(-2))
+            # 保存当前层的距离信息
             all_distances.append(distances)
 
-            # log
+            # 计算残差特征与量化特征的夹角（用于日志记录）
             cosine_sim = F.cosine_similarity(residual_feature, quant, dim=-1)
             angle.append((torch.acos(cosine_sim) * 180 / 3.14159).mean(-1).detach().cpu())
 
+            # 更新残差特征：减去当前层的量化特征
             residual_feature.sub_(quant)
+            # 累加当前层的量化特征到累计量化特征中
             aggregated_quants.add_(quant)
 
-            # log
+            # 计算累计量化特征与原始特征的夹角（用于日志记录）
             cosine_sim2 = F.cosine_similarity(x, aggregated_quants, dim=-1)
             angle_aggregated.append((torch.acos(cosine_sim2) * 180 / 3.14159).mean(-1).detach().cpu())
 
+            # 将当前累计的量化特征和码本索引分别添加到列表中
             quant_list.append(aggregated_quants.clone())
             code_list.append(code.unsqueeze(-1))
 
-            # log
+            # 记录当前层量化特征的范数（用于日志记录）
             quant_norm.append(quant.pow(2).sum(-1).pow(0.5).mean(-1).detach().cpu())
+            # 记录更新后的残差特征范数（用于日志记录）
             feature_norm.append(residual_feature.pow(2).sum(-1).pow(0.5).mean(-1).detach().cpu())
 
+        # 将所有层的码本索引拼接成一个张量
         codes = torch.cat(code_list, dim=-1)
-        # all_distances = torch.cat(all_distances, dim=-2)
+        # 返回量化结果
         return quant_list, codes, feature_norm, quant_norm, angle, angle_aggregated, all_distances
 
     def forward(self, x, num_samples=0, reference_code=None, **kwargs):
+        # 1. 重塑输入特征 x，使其符合码本形状要求
+        #    注意：当前实现中不需要转换形状，直接使用原始输入
         # x_reshaped = self.to_code_shape(x)
         # 不需要转换shape
         x_reshaped = x
         # if self.training:
         #     self.init_embed_(x_reshaped)
 
+        # 2. 对重塑后的特征进行残差量化
+        #    - quant_list: 每层量化后的特征列表
+        #    - codes: 量化后的码本索引
+        #    - feature_norm: 输入特征的范数列表
+        #    - quant_norm: 量化特征的范数列表
+        #    - angle: 每层残差特征与量化特征的夹角
+        #    - angle_aggregated: 累计量化特征与原始特征的夹角
+        #    - all_distances: 每层所有码本的距离
         quant_list, codes, feature_norm, quant_norm, angle, angle_aggregated, all_distances = self.quantize(x_reshaped,
                                                                                                             reference_code=reference_code,
                                                                                                             **kwargs)
 
+        # 3. 计算承诺损失（commitment loss）
+        #    承诺损失用于鼓励编码器生成接近码本的特征
         commitment_loss, commitment_loss_ze, commitment_loss_zq = self.compute_commitment_loss(x_reshaped, quant_list)
+        
+        # 4. 获取最终的量化特征
+        #    - quants_trunc: 最终的量化特征，通过停止梯度操作与原始特征解耦
+        #    - x + (quants_trunc - x).detach(): 停止梯度更新，只更新码本
         # quants_trunc = self.to_latent_shape(quant_list[-1])
         # 不需要转换shape
         quants_trunc = quant_list[-1]
         quants_trunc = x + (quants_trunc - x).detach()
 
+        # 5. 将承诺损失打包成字典格式返回
         commitment_loss = {
             'commitment_loss': commitment_loss,
             'commitment_loss_ze': commitment_loss_ze,
             'commitment_loss_zq': commitment_loss_zq
         }
 
+        # 6. 初始化负样本量化特征为None
         # 和hier版本输出保持对齐
         # quants_trunc2 = quant_list[-2]
         # quants_trunc2 = x + (quants_trunc2 - x).detach()
         quants_neg = None
 
+        # 7. 返回量化特征、承诺损失、码本索引等信息
         return quants_trunc, commitment_loss, codes, feature_norm, quant_norm, angle, angle_aggregated, quants_neg, all_distances
 
     def cosine_loss(self, x1, x2):

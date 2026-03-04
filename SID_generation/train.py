@@ -153,7 +153,7 @@ def main():
 
     OmegaConf.set_readonly(cfg, False)
     current_timestamp_seconds = int(time.time())
-    formatted_timestamp = datetime.datetime.fromtimestamp(current_timestamp_seconds).strftime('%Y%m%d_%H%M%S')
+    formatted_timestamp = datetime.datetime.fromtimestamp(current_timestamp_seconds).strftime('%Y%m%d_%H%M') # %H%M%S
     cfg.output_dir += f"{cfg.data.save_prefix}_bs{cfg.data.batch_size}_lr{cfg.train.lr}_ep{cfg.train.epochs}_{formatted_timestamp}"
 
     if dist_utils.get_rank() == 0 and not cfg.eval:
