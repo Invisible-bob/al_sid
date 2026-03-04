@@ -1,29 +1,28 @@
 {
-    "model_type": "t5",
-    "load_checkpoint_from": "./logs/t5base_3layer_s1tiny/checkpoint-200000/",
-    "dataset_name":"AL-GR/AL-GR-Tiny",
-    "data_file":"/mnt/nas/nas_fh/yixiang/repo/al_sid/algr/data/test_data/s1_tiny_test.csv",
+    "model_type": "qwen2_5",
+    "load_checkpoint_from": "./logs/qwen2.5_05b_3layer_ae_gr_v3_1_0118/checkpoint-500000/",
+    "data_file":"/mnt/nas/nas_fh/yixiang/repo/al_sid/algr/data/test_data/ae_gr_sample_test_v3_1_0118.csv",
     "custom_args": {
       "instruction_column": "system",
       "input_column": "user",
       "output_column": "answer",
-      "max_length": 1068,
+      "max_length": 1280,
       "max_source_length": 1024,
-      "max_target_length": 32
+      "max_target_length": 256
     },
     "predict_output": {
       "type": "local",
       "mode": "overwrite",
       "log_interval": 20,
-      "columns": ["answer", "_generated_text_", "user", "input_ids"],
+      "columns": ["answer", "_generated_new_text_", "user", "input_ids"],
       "skip_special_tokens": true
     },
     "training_args": {
       "do_predict": true,
-      "predict_with_generate": true,
       "per_device_eval_batch_size": 1,
-      "ddp_timeout": 86400,
       "bf16": true,
+      "predict_with_generate": true,
+      "ddp_timeout": 86400,
       "torch_empty_cache_steps": 100,
       "remove_unused_columns": false,
       "generation_config": {
